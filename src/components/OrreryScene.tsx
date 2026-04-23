@@ -333,13 +333,42 @@ function SceneContent({
   const physicalViewExtent = physicalView === 'inner' ? Math.max(innerExtent, sunExtent) : modelExtent
   const armillaryRadius = Math.max(planetExtent, (sunSphereRadius ?? 0) * 1.06 + 0.35)
 
+  // Keep this in sync with the visible sun rendered below (CentralHub uses 0.58,
+  // ScaledSun uses sunSphereRadius * bodyScale for physical, otherwise sunSphereRadius).
+  const visibleSunRadius = isDisplay
+    ? 0.58
+    : sunSphereRadius != null
+      ? isPhysical
+        ? sunSphereRadius * physicalBodyScale
+        : sunSphereRadius
+      : 0.58
+  // The sun group is rendered inside <group position={[0, 0.28, 0]} ...> below.
+  const sunWorldYOffset = 0.28
+  // Leave a comfortable visible gap between the camera and the sun's surface.
+  // The multiplier gives a proportional buffer at any preset, and the absolute
+  // minimum keeps a readable gap even when the sun is small.
+  const sunClearanceMultiplier = isPhysical ? 1.9 : isDisplay ? 2.4 : 2.1
+  const sunClearanceMinGap = isPhysical
+    ? Math.max(visibleSunRadius * 0.35, 40)
+    : isDisplay
+      ? 0.9
+      : Math.max(visibleSunRadius * 0.45, 1.2)
+  const sunSafeRadius = Math.max(
+    visibleSunRadius * sunClearanceMultiplier,
+    visibleSunRadius + sunClearanceMinGap
+  )
+
   const shadowScale = Math.max(22, modelExtent * 1.45)
-  const minDistance =
+  // Floor minDistance to keep the camera outside the sun even when the user pans
+  // the orbit target onto the sun and then dollies in.
+  const minDistance = Math.max(
+    sunSafeRadius,
     modelPreset === 'physical'
       ? Math.max(4, sunExtent * 0.08)
       : modelPreset === 'limited'
       ? Math.max(0.75, (sunSphereRadius ?? 0) * 0.55)
       : 0.25
+  )
   const targetZ = 0
   const cameraZ = isPhysical
     ? physicalView === 'inner'
@@ -351,7 +380,12 @@ function SceneContent({
       ? Math.max(4200, physicalViewExtent * 0.42)
       : Math.max(64000, physicalViewExtent * 0.34)
     : Math.max(8.5, modelExtent * 0.58)
-  const maxDistance = isPhysical ? Math.max(cameraZ * 10, physicalViewExtent * 12) : Math.max(240, modelExtent * 18)
+  // In physical mode, base the maximum zoom-out distance on the whole-system
+  // extent so Inner view can dolly out exactly as far as Whole view.
+  const physicalWholeCameraZ = Math.max(180000, modelExtent * 1.12)
+  const maxDistance = isPhysical
+    ? Math.max(physicalWholeCameraZ * 10, modelExtent * 12)
+    : Math.max(240, modelExtent * 18)
   const cameraFar = Math.max(500, maxDistance * 1.5, modelExtent * 6)
   const cameraFov = isPhysical ? (physicalView === 'inner' ? 38 : 44) : 36
 
@@ -477,6 +511,77 @@ function SceneContent({
     const currentCamera = cameraRef.current
     if (!ctrl || !currentCamera) return
 
+    const enforceSunCollision = () => {
+      const sunCenterX = 0
+      const sunCenterY = sunWorldYOffset
+      const sunCenterZ = 0
+      const dx = currentCamera.position.x - sunCenterX
+      const dy = currentCamera.position.y - sunCenterY
+      const dz = currentCamera.position.z - sunCenterZ
+      const distSq = dx * dx + dy * dy + dz * dz
+      const safe = sunSafeRadius
+      if (distSq >= safe * safe) return
+
+      let nx = dx
+      let ny = dy
+      let nz = dz
+      const dist = Math.sqrt(distSq)
+      if (dist < 1e-4) {
+        // Camera is essentially at the sun centre: pick the previous outward
+        // direction stored in the desired position, or fall back to +Z.
+        const fallback = desiredCameraPositionRef.current
+        const fdx = fallback.x - sunCenterX
+        const fdy = fallback.y - sunCenterY
+        const fdz = fallback.z - sunCenterZ
+        const fLen = Math.sqrt(fdx * fdx + fdy * fdy + fdz * fdz)
+        if (fLen > 1e-4) {
+          nx = fdx / fLen
+          ny = fdy / fLen
+          nz = fdz / fLen
+        } else {
+          nx = 0
+          ny = 0
+          nz = 1
+        }
+      } else {
+        nx /= dist
+        ny /= dist
+        nz /= dist
+      }
+
+      currentCamera.position.set(
+        sunCenterX + nx * safe,
+        sunCenterY + ny * safe,
+        sunCenterZ + nz * safe
+      )
+
+      // If the orbit target itself ended up inside the sun (e.g. via panning),
+      // nudge it onto the safe sphere as well so the camera has a sensible
+      // pivot and the next zoom won't push us back inside.
+      const tdx = ctrl.target.x - sunCenterX
+      const tdy = ctrl.target.y - sunCenterY
+      const tdz = ctrl.target.z - sunCenterZ
+      const targetDistSq = tdx * tdx + tdy * tdy + tdz * tdz
+      if (targetDistSq < safe * safe) {
+        const tLen = Math.sqrt(targetDistSq)
+        if (tLen < 1e-4) {
+          ctrl.target.set(sunCenterX, sunCenterY, sunCenterZ)
+        } else {
+          ctrl.target.set(
+            sunCenterX + (tdx / tLen) * safe,
+            sunCenterY + (tdy / tLen) * safe,
+            sunCenterZ + (tdz / tLen) * safe
+          )
+        }
+      }
+
+      currentCamera.lookAt(ctrl.target)
+      desiredCameraPositionRef.current.copy(currentCamera.position)
+      desiredControlsTargetRef.current.copy(ctrl.target)
+      isCameraAnimatingRef.current = false
+      ctrl.update()
+    }
+
     const pressedKeys = pressedKeysRef.current
     if (
       pressedKeys.KeyW ||
@@ -521,7 +626,10 @@ function SceneContent({
       ctrl.update()
     }
 
-    if (!isCameraAnimatingRef.current) return
+    if (!isCameraAnimatingRef.current) {
+      enforceSunCollision()
+      return
+    }
 
     const positionLerp = 1 - Math.exp(-delta * 4.8)
     const targetLerp = 1 - Math.exp(-delta * 5.2)
@@ -563,6 +671,8 @@ function SceneContent({
       ctrl.update()
       isCameraAnimatingRef.current = false
     }
+
+    enforceSunCollision()
   })
 
   return (
