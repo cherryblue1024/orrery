@@ -1,6 +1,6 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type ElementRef } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { ContactShadows, Environment, TrackballControls } from '@react-three/drei'
+import { ContactShadows, Environment, TrackballControls, useEnvironment } from '@react-three/drei'
 import * as THREE from 'three'
 import type { ModelPreset, PlanetConfig } from '../data/planets'
 import {
@@ -13,6 +13,8 @@ import { Planet } from './Planet'
 
 type CameraControlsHandle = ElementRef<typeof TrackballControls>
 export type PhysicalViewMode = 'inner' | 'whole'
+
+useEnvironment.preload({ preset: 'studio' })
 
 const brass = {
   color: '#c4a052',
@@ -615,8 +617,7 @@ function SceneContent({
 
       <TrackballControls
         ref={controlsRef}
-        staticMoving={false}
-        dynamicDampingFactor={0.065}
+        staticMoving
         minDistance={minDistance}
         maxDistance={maxDistance}
       />
