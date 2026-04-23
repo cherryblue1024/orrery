@@ -139,21 +139,6 @@ function App() {
 
         <p className="mode-note">{modeNote}</p>
 
-        <section className="app-copy" aria-labelledby="about-orrery-heading">
-          <h2 id="about-orrery-heading">Interactive Solar System Orrery</h2>
-          <p>
-            Brass Orrery is a browser-based 3D model of the solar system that
-            combines a museum-style mechanical aesthetic with interactive
-            astronomy exploration. The current view is set to the{' '}
-            <strong>{visibleModeLabel}</strong> preset, while the scene continues
-            to show the Sun and all eight planets in one experience.
-          </p>
-          <p>
-            Use the presets to compare stylized spacing with more science-led
-            proportions, pause the mechanism, and adjust orbital speed. Visible
-            bodies include {bodySummary}.
-          </p>
-        </section>
       </main>
 
       <footer className="app-footer">

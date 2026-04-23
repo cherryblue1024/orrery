@@ -401,6 +401,37 @@ function SceneContent({
   }, [moveCameraToView])
 
   useEffect(() => {
+    const ctrl = controlsRef.current
+    if (!ctrl) return
+
+    const cancelCameraAnimation = () => {
+      if (!isCameraAnimatingRef.current) return
+      const currentCamera = cameraRef.current
+      isCameraAnimatingRef.current = false
+      if (currentCamera) {
+        desiredCameraPositionRef.current.copy(currentCamera.position)
+        desiredControlsTargetRef.current.copy(ctrl.target)
+        desiredCameraUpRef.current.copy(currentCamera.up)
+        desiredFovRef.current = currentCamera.fov
+        desiredFarRef.current = currentCamera.far
+      }
+    }
+
+    ctrl.addEventListener('start', cancelCameraAnimation)
+    const domElement = (ctrl as unknown as { domElement?: HTMLElement }).domElement
+    domElement?.addEventListener('wheel', cancelCameraAnimation, { passive: true })
+    domElement?.addEventListener('pointerdown', cancelCameraAnimation)
+    domElement?.addEventListener('touchstart', cancelCameraAnimation, { passive: true })
+
+    return () => {
+      ctrl.removeEventListener('start', cancelCameraAnimation)
+      domElement?.removeEventListener('wheel', cancelCameraAnimation)
+      domElement?.removeEventListener('pointerdown', cancelCameraAnimation)
+      domElement?.removeEventListener('touchstart', cancelCameraAnimation)
+    }
+  }, [moveCameraToView])
+
+  useEffect(() => {
     const isEditableTarget = (target: EventTarget | null) =>
       target instanceof HTMLElement &&
       (target.isContentEditable ||
