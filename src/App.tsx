@@ -23,12 +23,6 @@ function App() {
       : modelPreset === 'limited'
         ? 'Limited: real orbital periods and planet sizes with a capped sun; heliocentric tracks stay centered on the sun.'
         : 'Physical: true Sun, planet, and heliocentric distance ratios. Use Inner view for readable nearby planets, or Whole view to see the full system without changing those ratios.'
-  const visibleModeLabel =
-    modelPreset === 'display'
-      ? 'stylized display'
-      : modelPreset === 'limited'
-        ? 'limited science'
-        : `physical ${physicalView === 'inner' ? 'inner-system' : 'whole-system'}`
 
   return (
     <div className="app">
