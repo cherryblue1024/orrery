@@ -11,6 +11,20 @@ pnpm build    # production build to dist/
 pnpm preview  # preview production build
 ```
 
+## SEO setup
+
+Set the production site URL before building:
+
+```bash
+cp .env.example .env.production
+```
+
+```bash
+VITE_SITE_URL=https://your-domain.com
+```
+
+`pnpm build` uses `VITE_SITE_URL` to set canonical metadata and generate `dist/sitemap.xml` plus `dist/robots.txt`.
+
 ## Git
 
 Recommended first-time project setup:

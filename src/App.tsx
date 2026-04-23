@@ -23,21 +23,27 @@ function App() {
       : modelPreset === 'limited'
         ? 'Limited: real orbital periods and planet sizes with a capped sun; heliocentric tracks stay centered on the sun.'
         : 'Physical: true Sun, planet, and heliocentric distance ratios. Use Inner view for readable nearby planets, or Whole view to see the full system without changing those ratios.'
+  const visibleModeLabel =
+    modelPreset === 'display'
+      ? 'stylized display'
+      : modelPreset === 'limited'
+        ? 'limited science'
+        : `physical ${physicalView === 'inner' ? 'inner-system' : 'whole-system'}`
 
   return (
     <div className="app">
       <header className="app-header">
         <div className="app-brand">
-          <img className="app-logo" src={logo} alt="Orrery logo" />
+          <img className="app-logo" src={logo} alt="Brass Orrery logo" />
           <div>
             <p className="app-kicker">Brass mechanical model</p>
-            <h1>Orrery</h1>
+            <h1>Brass Orrery</h1>
           </div>
         </div>
         <p>
-          A tabletop brass orrery of all eight planets. Drag to turn the view,
-          scroll to move closer — use the mode buttons to switch between a
-          stylized display and two science-oriented layouts.
+          An interactive 3D solar system orrery with all eight planets. Drag to
+          orbit the camera, scroll to move closer, and switch between stylized
+          display and science-oriented layouts.
         </p>
       </header>
 
@@ -132,6 +138,22 @@ function App() {
         </div>
 
         <p className="mode-note">{modeNote}</p>
+
+        <section className="app-copy" aria-labelledby="about-orrery-heading">
+          <h2 id="about-orrery-heading">Interactive Solar System Orrery</h2>
+          <p>
+            Brass Orrery is a browser-based 3D model of the solar system that
+            combines a museum-style mechanical aesthetic with interactive
+            astronomy exploration. The current view is set to the{' '}
+            <strong>{visibleModeLabel}</strong> preset, while the scene continues
+            to show the Sun and all eight planets in one experience.
+          </p>
+          <p>
+            Use the presets to compare stylized spacing with more science-led
+            proportions, pause the mechanism, and adjust orbital speed. Visible
+            bodies include {bodySummary}.
+          </p>
+        </section>
       </main>
 
       <footer className="app-footer">
