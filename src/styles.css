@@ -36,6 +36,39 @@ body {
     radial-gradient(ellipse 100% 70% at 50% 0%, #2a2418 0%, var(--bg-deep) 50%),
     var(--bg-deep);
   -webkit-font-smoothing: antialiased;
+  /*
+   * Disable text selection and the iOS long-press callout/translate menu
+   * globally. Form controls (range, checkbox, button) are unaffected —
+   * they don't rely on text selection. Any future input or textarea
+   * should re-enable selection locally via the rule below.
+   */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  /* Don't let double-tap auto-zoom the page on iOS. */
+  touch-action: manipulation;
+}
+
+input,
+textarea,
+[contenteditable] {
+  -webkit-user-select: auto;
+  user-select: auto;
+  -webkit-touch-callout: default;
+}
+
+/*
+ * Every button in the app: no long-press callout, no system drag/selection,
+ * no tap highlight. JS-side onContextMenu handlers (on .controls and the
+ * on-screen pad) complete the suppression for desktop right-click and
+ * Android long-press.
+ */
+button {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 #root {
@@ -270,8 +303,36 @@ body {
 
 @media (max-width: 640px) {
   .app-brand {
-    flex-direction: column;
+    flex-direction: row;
     gap: 0.65rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .app-logo {
+    width: 2.75rem;
+  }
+
+  .app-header {
+    padding: 0.75rem 1rem 0.35rem;
+  }
+
+  .app-header h1 {
+    font-size: 1.6rem;
+    margin-bottom: 0.3rem;
+  }
+
+  .app-kicker {
+    font-size: 0.62rem;
+    margin-bottom: 0.2rem;
+  }
+
+  .app-header p {
+    font-size: 0.8rem;
+    line-height: 1.45;
+  }
+
+  .app-main {
+    padding: 0 0.75rem 1rem;
   }
 
   .controls {
@@ -287,6 +348,172 @@ body {
     flex: 1;
     max-width: none;
   }
+
+  /*
+   * When .controls stretches its children on narrow screens, a segmented
+   * control whose inner buttons only have min-width would leave an empty
+   * strip on the right. Let each button grow to fill the row instead.
+   */
+  .segmented {
+    display: flex;
+    width: 100%;
+  }
+
+  .segmented button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+}
+
+/*
+ * Touch-primary devices (phones, tablets, touch laptops): the canvas itself
+ * still captures pointer gestures (it has touch-action: none), but outside
+ * the canvas the page must scroll so the controls and the on-screen rotate
+ * pad are reachable below it.
+ *
+ * Scroll container strategy: only <html> scrolls. <body> and <#root> are
+ * relaxed to overflow: visible so they don't trap content inside a fixed
+ * 100vh box (the original desktop layout) and don't create a competing
+ * nested scroll container.
+ */
+@media (hover: none) and (pointer: coarse) {
+  html {
+    height: auto;
+    min-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+
+  body,
+  #root {
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
+  }
+
+  .app {
+    flex: 0 0 auto;
+    min-height: 100vh;
+  }
+
+  /*
+   * .app-main defaults to flex: 1 so the canvas can stretch to fill the
+   * viewport on desktop. On touch we want the page to grow with its
+   * content instead, so .app-main sizes to its children and anything below
+   * the canvas scrolls into view via <html>.
+   */
+  .app-main {
+    flex: 0 0 auto;
+  }
+
+  /*
+   * Keep the canvas short enough that the rotate / zoom pad below it is
+   * visible in the initial viewport on phones. Uses svh (small viewport
+   * height: the stable height excluding the retractable browser UI) so
+   * the buttons don't get hidden by Safari's bottom address bar.
+   */
+  .canvas-wrap {
+    flex: none;
+    height: min(48vh, 420px);
+    height: min(48svh, 420px);
+    min-height: 240px;
+  }
+}
+
+/*
+ * On-screen rotate / zoom pad. Always visible (below the canvas) so the
+ * same UI works on desktop clicks and on touch gestures; the Canvas itself
+ * still captures mouse / finger drags for direct camera control.
+ */
+.touch-controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.touch-pad {
+  display: grid;
+  grid-template-columns: repeat(4, 44px);
+  grid-template-rows: 44px;
+  gap: 4px;
+  padding: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.touch-zoom {
+  display: grid;
+  grid-template-columns: repeat(2, 44px);
+  grid-template-rows: 44px;
+  gap: 4px;
+  padding: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.touch-pad .touch-left {
+  grid-column: 1;
+}
+
+.touch-pad .touch-up {
+  grid-column: 2;
+}
+
+.touch-pad .touch-down {
+  grid-column: 3;
+}
+
+.touch-pad .touch-right {
+  grid-column: 4;
+}
+
+.touch-btn {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  font-family: inherit;
+  font-size: 1.15rem;
+  line-height: 1;
+  color: var(--text);
+  background: linear-gradient(180deg, #4a3d2a 0%, #2e261c 100%);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  /*
+   * Suppress the long-press / right-click context menu on both iOS
+   * (touch-callout) and Android/desktop (user-drag + pointer-events
+   * during contextmenu). The JS handler also preventDefault()s
+   * `contextmenu` for belt-and-braces.
+   */
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+}
+
+.touch-btn:hover {
+  background: linear-gradient(180deg, #5c4d36 0%, #3a3024 100%);
+  border-color: var(--accent);
+}
+
+.touch-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.touch-btn:active,
+.touch-btn.is-pressed {
+  background: linear-gradient(180deg, #7a6133 0%, #4e3f27 100%);
+  border-color: var(--accent);
+  color: #fff2d2;
 }
 
 .orrery-scene-load-overlay {

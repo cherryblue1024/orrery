@@ -52,7 +52,16 @@ function App() {
           onControlsReady={onControlsReady}
         />
 
-        <div className="controls" role="toolbar" aria-label="Model controls">
+        <div
+          className="controls"
+          role="toolbar"
+          aria-label="Model controls"
+          onContextMenu={(event) => {
+            if ((event.target as HTMLElement).closest('button')) {
+              event.preventDefault()
+            }
+          }}
+        >
           <div className="segmented" aria-label="Model preset">
             <button
               type="button"

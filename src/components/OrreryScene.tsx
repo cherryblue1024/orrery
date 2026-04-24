@@ -7,6 +7,9 @@ import {
   useRef,
   useState,
   type ElementRef,
+  type MutableRefObject,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { Canvas, useFrame, useStore, useThree } from '@react-three/fiber'
 import { ContactShadows, TrackballControls, useEnvironment } from '@react-three/drei'
@@ -23,6 +26,13 @@ import { Planet } from './Planet'
 
 type CameraControlsHandle = ElementRef<typeof TrackballControls>
 export type PhysicalViewMode = 'inner' | 'whole'
+
+type VirtualKeyCode = 'KeyW' | 'KeyA' | 'KeyS' | 'KeyD' | 'KeyQ' | 'KeyE'
+type VirtualKeyState = Record<VirtualKeyCode, boolean>
+
+function createEmptyVirtualKeys(): VirtualKeyState {
+  return { KeyW: false, KeyA: false, KeyS: false, KeyD: false, KeyQ: false, KeyE: false }
+}
 
 useEnvironment.preload({ preset: 'studio' })
 
@@ -345,6 +355,7 @@ function SceneContent({
   timeScale,
   onControlsReady,
   onRevealReady,
+  touchKeysRef,
 }: {
   paused: boolean
   planets: PlanetConfig[]
@@ -354,6 +365,7 @@ function SceneContent({
   timeScale: number
   onControlsReady?: (reset: () => void) => void
   onRevealReady?: () => void
+  touchKeysRef: MutableRefObject<VirtualKeyState>
 }) {
   const envMap = useEnvironment({ preset: 'studio' })
   const rootStore = useStore()
@@ -368,14 +380,7 @@ function SceneContent({
   const isCameraAnimatingRef = useRef(false)
   const hasAppliedDisplayCameraIntroRef = useRef(false)
   const hadLimitedPresetRef = useRef(false)
-  const pressedKeysRef = useRef({
-    KeyW: false,
-    KeyA: false,
-    KeyS: false,
-    KeyD: false,
-    KeyQ: false,
-    KeyE: false,
-  })
+  const pressedKeysRef = useRef<VirtualKeyState>(createEmptyVirtualKeys())
   const keyboardOffsetRef = useRef(new THREE.Vector3())
   const keyboardSphericalRef = useRef(new THREE.Spherical())
   const defaultCameraUpRef = useRef(new THREE.Vector3(0, 1, 0))
@@ -680,26 +685,35 @@ function SceneContent({
       ctrl.update()
     }
 
-    const pressedKeys = pressedKeysRef.current
+    const keyboardKeys = pressedKeysRef.current
+    const touchKeys = touchKeysRef.current
+    const activeKeys: VirtualKeyState = {
+      KeyW: keyboardKeys.KeyW || touchKeys.KeyW,
+      KeyA: keyboardKeys.KeyA || touchKeys.KeyA,
+      KeyS: keyboardKeys.KeyS || touchKeys.KeyS,
+      KeyD: keyboardKeys.KeyD || touchKeys.KeyD,
+      KeyQ: keyboardKeys.KeyQ || touchKeys.KeyQ,
+      KeyE: keyboardKeys.KeyE || touchKeys.KeyE,
+    }
     if (
-      pressedKeys.KeyW ||
-      pressedKeys.KeyA ||
-      pressedKeys.KeyS ||
-      pressedKeys.KeyD ||
-      pressedKeys.KeyQ ||
-      pressedKeys.KeyE
+      activeKeys.KeyW ||
+      activeKeys.KeyA ||
+      activeKeys.KeyS ||
+      activeKeys.KeyD ||
+      activeKeys.KeyQ ||
+      activeKeys.KeyE
     ) {
       keyboardOffsetRef.current.copy(currentCamera.position).sub(ctrl.target)
       keyboardSphericalRef.current.setFromVector3(keyboardOffsetRef.current)
 
       const keyboardRotateSpeed = delta * 1.5
       const keyboardZoomSpeed = Math.max(minDistance * 0.9, keyboardSphericalRef.current.radius * 1.4) * delta
-      if (pressedKeys.KeyA) keyboardSphericalRef.current.theta += keyboardRotateSpeed
-      if (pressedKeys.KeyD) keyboardSphericalRef.current.theta -= keyboardRotateSpeed
-      if (pressedKeys.KeyW) keyboardSphericalRef.current.phi -= keyboardRotateSpeed
-      if (pressedKeys.KeyS) keyboardSphericalRef.current.phi += keyboardRotateSpeed
-      if (pressedKeys.KeyQ) keyboardSphericalRef.current.radius -= keyboardZoomSpeed
-      if (pressedKeys.KeyE) keyboardSphericalRef.current.radius += keyboardZoomSpeed
+      if (activeKeys.KeyA) keyboardSphericalRef.current.theta += keyboardRotateSpeed
+      if (activeKeys.KeyD) keyboardSphericalRef.current.theta -= keyboardRotateSpeed
+      if (activeKeys.KeyW) keyboardSphericalRef.current.phi -= keyboardRotateSpeed
+      if (activeKeys.KeyS) keyboardSphericalRef.current.phi += keyboardRotateSpeed
+      if (activeKeys.KeyQ) keyboardSphericalRef.current.radius -= keyboardZoomSpeed
+      if (activeKeys.KeyE) keyboardSphericalRef.current.radius += keyboardZoomSpeed
 
       keyboardSphericalRef.current.phi = THREE.MathUtils.clamp(
         keyboardSphericalRef.current.phi,
@@ -905,48 +919,148 @@ export function OrreryScene({
     })
   }, [])
 
+  const touchKeysRef = useRef<VirtualKeyState>(createEmptyVirtualKeys())
+
   return (
-    <div className={className} style={{ position: 'relative' }}>
-      <Canvas
-        shadows
-        camera={initialCamera}
-        gl={{
-          antialias: true,
-          alpha: false,
-          toneMapping: THREE.ACESFilmicToneMapping,
-          toneMappingExposure: 1.05,
-        }}
-        dpr={[1, 2]}
-      >
-        <Suspense fallback={<color attach="background" args={['#12100e']} />}>
-          <SceneContent
-            paused={paused}
-            planets={planets}
-            modelPreset={modelPreset}
-            physicalView={physicalView}
-            physicalBodyScale={physicalBodyScale}
-            timeScale={timeScale}
-            onControlsReady={onControlsReady}
-            onRevealReady={handleRevealReady}
-          />
-        </Suspense>
-      </Canvas>
-      <div
-        className="orrery-scene-load-overlay"
-        role="status"
-        aria-live="polite"
-        aria-busy={!canvasReady}
-        aria-hidden={canvasReady}
-        style={{
-          position: 'absolute',
-          inset: 0,
-          background: '#12100e',
-          opacity: canvasReady ? 0 : 1,
-          transition: 'opacity 180ms ease-out',
-          pointerEvents: 'none',
-        }}
-      >
-        <span className="orrery-scene-load-hint">Loading scene…</span>
+    <>
+      <div className={className} style={{ position: 'relative' }}>
+        <Canvas
+          shadows
+          camera={initialCamera}
+          gl={{
+            antialias: true,
+            alpha: false,
+            toneMapping: THREE.ACESFilmicToneMapping,
+            toneMappingExposure: 1.05,
+          }}
+          dpr={[1, 2]}
+        >
+          <Suspense fallback={<color attach="background" args={['#12100e']} />}>
+            <SceneContent
+              paused={paused}
+              planets={planets}
+              modelPreset={modelPreset}
+              physicalView={physicalView}
+              physicalBodyScale={physicalBodyScale}
+              timeScale={timeScale}
+              onControlsReady={onControlsReady}
+              onRevealReady={handleRevealReady}
+              touchKeysRef={touchKeysRef}
+            />
+          </Suspense>
+        </Canvas>
+        <div
+          className="orrery-scene-load-overlay"
+          role="status"
+          aria-live="polite"
+          aria-busy={!canvasReady}
+          aria-hidden={canvasReady}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: '#12100e',
+            opacity: canvasReady ? 0 : 1,
+            transition: 'opacity 180ms ease-out',
+            pointerEvents: 'none',
+          }}
+        >
+          <span className="orrery-scene-load-hint">Loading scene…</span>
+        </div>
+      </div>
+      <TouchControls touchKeysRef={touchKeysRef} />
+    </>
+  )
+}
+
+function TouchControls({
+  touchKeysRef,
+}: {
+  touchKeysRef: MutableRefObject<VirtualKeyState>
+}) {
+  const makeHandlers = useCallback(
+    (key: VirtualKeyCode) => {
+      const press = (event: ReactPointerEvent<HTMLButtonElement>) => {
+        event.preventDefault()
+        touchKeysRef.current[key] = true
+        event.currentTarget.setPointerCapture(event.pointerId)
+        event.currentTarget.classList.add('is-pressed')
+      }
+      const release = (event: ReactPointerEvent<HTMLButtonElement>) => {
+        touchKeysRef.current[key] = false
+        event.currentTarget.classList.remove('is-pressed')
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId)
+        }
+      }
+      return {
+        onPointerDown: press,
+        onPointerUp: release,
+        onPointerCancel: release,
+        onPointerLeave: release,
+        onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>) => event.preventDefault(),
+      }
+    },
+    [touchKeysRef]
+  )
+
+  const suppressContextMenu = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => event.preventDefault(),
+    []
+  )
+
+  return (
+    <div className="touch-controls" aria-hidden="false" onContextMenu={suppressContextMenu}>
+      <div className="touch-pad" role="group" aria-label="Camera rotate">
+        <button
+          type="button"
+          className="touch-btn touch-left"
+          aria-label="Rotate left"
+          {...makeHandlers('KeyA')}
+        >
+          ←
+        </button>
+        <button
+          type="button"
+          className="touch-btn touch-up"
+          aria-label="Tilt up"
+          {...makeHandlers('KeyW')}
+        >
+          ↑
+        </button>
+        <button
+          type="button"
+          className="touch-btn touch-down"
+          aria-label="Tilt down"
+          {...makeHandlers('KeyS')}
+        >
+          ↓
+        </button>
+        <button
+          type="button"
+          className="touch-btn touch-right"
+          aria-label="Rotate right"
+          {...makeHandlers('KeyD')}
+        >
+          →
+        </button>
+      </div>
+      <div className="touch-zoom" role="group" aria-label="Camera zoom">
+        <button
+          type="button"
+          className="touch-btn"
+          aria-label="Zoom in"
+          {...makeHandlers('KeyQ')}
+        >
+          +
+        </button>
+        <button
+          type="button"
+          className="touch-btn"
+          aria-label="Zoom out"
+          {...makeHandlers('KeyE')}
+        >
+          −
+        </button>
       </div>
     </div>
   )
