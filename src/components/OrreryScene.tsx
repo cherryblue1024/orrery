@@ -1,11 +1,21 @@
-import { Suspense, useCallback, useEffect, useRef, useState, type ElementRef } from 'react'
-import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { ContactShadows, Environment, TrackballControls, useEnvironment } from '@react-three/drei'
+import {
+  Suspense,
+  startTransition,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ElementRef,
+} from 'react'
+import { Canvas, useFrame, useStore, useThree } from '@react-three/fiber'
+import { ContactShadows, TrackballControls, useEnvironment } from '@react-three/drei'
 import * as THREE from 'three'
 import type { ModelPreset, PlanetConfig } from '../data/planets'
 import {
   getEarthRadius,
   getMaxHeliocentricOrbit,
+  getPlanets,
   getSunSphereRadius,
   PHYSICAL_BODY_SCALE,
 } from '../data/planets'
@@ -279,6 +289,53 @@ function computePhysicalBodyScale(planets: PlanetConfig[], sunRadius: number): n
   return Math.max(1, Math.min(PHYSICAL_BODY_SCALE, maxSafeScale * 0.95))
 }
 
+function computeCameraPose(
+  modelPreset: ModelPreset,
+  physicalView: PhysicalViewMode,
+  modelExtent: number,
+  physicalViewExtent: number
+): { cameraY: number; cameraZ: number; cameraFar: number; cameraFov: number } {
+  const isPhysical = modelPreset === 'physical'
+  const cameraZ = isPhysical
+    ? physicalView === 'inner'
+      ? Math.max(14000, physicalViewExtent * 1.45)
+      : Math.max(180000, physicalViewExtent * 1.12)
+    : Math.max(16, modelExtent * 1.08)
+  const cameraY = isPhysical
+    ? physicalView === 'inner'
+      ? Math.max(4200, physicalViewExtent * 0.42)
+      : Math.max(64000, physicalViewExtent * 0.34)
+    : Math.max(8.5, modelExtent * 0.58)
+  const physicalWholeCameraZ = Math.max(180000, modelExtent * 1.12)
+  const maxDistance = isPhysical
+    ? Math.max(physicalWholeCameraZ * 10, modelExtent * 12)
+    : Math.max(240, modelExtent * 18)
+  const cameraFar = Math.max(500, maxDistance * 1.5, modelExtent * 6)
+  const cameraFov = isPhysical ? (physicalView === 'inner' ? 38 : 44) : 36
+  return { cameraY, cameraZ, cameraFar, cameraFov }
+}
+
+/** Camera pose for a preset using that preset's planet list (matches SceneContent extent math). */
+function computeCameraPoseForPresetList(
+  preset: ModelPreset,
+  physicalView: PhysicalViewMode,
+  planets: PlanetConfig[]
+): { cameraY: number; cameraZ: number; cameraFar: number; cameraFov: number } {
+  const isPhysical = preset === 'physical'
+  const earthR = getEarthRadius(planets)
+  const maxHelio = getMaxHeliocentricOrbit(planets)
+  const sunSphereRadius = getSunSphereRadius(preset, earthR, maxHelio)
+  const physicalBodyScale =
+    isPhysical && sunSphereRadius != null ? computePhysicalBodyScale(planets, sunSphereRadius) : 1
+  const bodyScale = isPhysical ? physicalBodyScale : 1
+  const planetExtent = computePlanetExtent(planets, bodyScale)
+  const innerExtent = computeInnerPhysicalExtentWithScale(planets, physicalBodyScale)
+  const sunExtent = isPhysical ? (sunSphereRadius ?? 0.92) * physicalBodyScale : sunSphereRadius ?? 0.92
+  const modelExtent = Math.max(planetExtent, sunExtent)
+  const physicalViewExtent = physicalView === 'inner' ? Math.max(innerExtent, sunExtent) : modelExtent
+  return computeCameraPose(preset, physicalView, modelExtent, physicalViewExtent)
+}
+
 function SceneContent({
   paused,
   planets,
@@ -287,6 +344,7 @@ function SceneContent({
   physicalBodyScale,
   timeScale,
   onControlsReady,
+  onRevealReady,
 }: {
   paused: boolean
   planets: PlanetConfig[]
@@ -295,7 +353,10 @@ function SceneContent({
   physicalBodyScale: number
   timeScale: number
   onControlsReady?: (reset: () => void) => void
+  onRevealReady?: () => void
 }) {
+  const envMap = useEnvironment({ preset: 'studio' })
+  const rootStore = useStore()
   const controlsRef = useRef<CameraControlsHandle>(null)
   const rawCamera = useThree((state) => state.camera)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
@@ -304,8 +365,9 @@ function SceneContent({
   const desiredCameraUpRef = useRef(new THREE.Vector3(0, 1, 0))
   const desiredFovRef = useRef(36)
   const desiredFarRef = useRef(500)
-  const hasInitializedCameraRef = useRef(false)
   const isCameraAnimatingRef = useRef(false)
+  const hasAppliedDisplayCameraIntroRef = useRef(false)
+  const hadLimitedPresetRef = useRef(false)
   const pressedKeysRef = useRef({
     KeyW: false,
     KeyA: false,
@@ -370,28 +432,33 @@ function SceneContent({
       : 0.25
   )
   const targetZ = 0
-  const cameraZ = isPhysical
-    ? physicalView === 'inner'
-      ? Math.max(14000, physicalViewExtent * 1.45)
-      : Math.max(180000, physicalViewExtent * 1.12)
-    : Math.max(16, modelExtent * 1.08)
-  const cameraY = isPhysical
-    ? physicalView === 'inner'
-      ? Math.max(4200, physicalViewExtent * 0.42)
-      : Math.max(64000, physicalViewExtent * 0.34)
-    : Math.max(8.5, modelExtent * 0.58)
-  // In physical mode, base the maximum zoom-out distance on the whole-system
-  // extent so Inner view can dolly out exactly as far as Whole view.
+  const { cameraY, cameraZ, cameraFar, cameraFov } = computeCameraPose(
+    modelPreset,
+    physicalView,
+    modelExtent,
+    physicalViewExtent
+  )
   const physicalWholeCameraZ = Math.max(180000, modelExtent * 1.12)
   const maxDistance = isPhysical
     ? Math.max(physicalWholeCameraZ * 10, modelExtent * 12)
     : Math.max(240, modelExtent * 18)
-  const cameraFar = Math.max(500, maxDistance * 1.5, modelExtent * 6)
-  const cameraFov = isPhysical ? (physicalView === 'inner' ? 38 : 44) : 36
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     cameraRef.current = rawCamera as THREE.PerspectiveCamera
   }, [rawCamera])
+
+  useEffect(() => {
+    const scene = rootStore.getState().scene
+    const previousEnvironment = scene.environment
+    const previousIntensity = scene.environmentIntensity
+    scene.environment = envMap
+    scene.environmentIntensity = 1.02
+    return () => {
+      const sceneCleanup = rootStore.getState().scene
+      sceneCleanup.environment = previousEnvironment
+      sceneCleanup.environmentIntensity = previousIntensity
+    }
+  }, [rootStore, envMap])
 
   const moveCameraToView = useCallback((instant: boolean) => {
     const ctrl = controlsRef.current
@@ -428,11 +495,42 @@ function SceneContent({
     })
   }, [moveCameraToView, onControlsReady])
 
+  useLayoutEffect(() => {
+    const ctrl = controlsRef.current
+    const currentCamera = cameraRef.current
+    if (!ctrl || !currentCamera) {
+      moveCameraToView(false)
+      return
+    }
+
+    if (modelPreset === 'limited') {
+      hadLimitedPresetRef.current = true
+    }
+
+    if (
+      modelPreset === 'display' &&
+      !hadLimitedPresetRef.current &&
+      !hasAppliedDisplayCameraIntroRef.current
+    ) {
+      hasAppliedDisplayCameraIntroRef.current = true
+      const limitedPlanets = getPlanets('limited')
+      const camLimited = computeCameraPoseForPresetList('limited', physicalView, limitedPlanets)
+      currentCamera.position.set(0, camLimited.cameraY, camLimited.cameraZ)
+      currentCamera.fov = camLimited.cameraFov
+      currentCamera.far = camLimited.cameraFar
+      currentCamera.updateProjectionMatrix()
+      ctrl.target.set(0, 0.28, targetZ)
+      currentCamera.up.copy(defaultCameraUpRef.current)
+      currentCamera.lookAt(ctrl.target)
+      ctrl.update()
+    }
+
+    moveCameraToView(false)
+  }, [moveCameraToView, modelPreset, physicalView, targetZ])
+
   useEffect(() => {
-    const shouldJump = !hasInitializedCameraRef.current
-    moveCameraToView(shouldJump)
-    hasInitializedCameraRef.current = true
-  }, [moveCameraToView])
+    onRevealReady?.()
+  }, [onRevealReady])
 
   useEffect(() => {
     const ctrl = controlsRef.current
@@ -631,9 +729,10 @@ function SceneContent({
       return
     }
 
-    const positionLerp = 1 - Math.exp(-delta * 4.8)
-    const targetLerp = 1 - Math.exp(-delta * 5.2)
-    const upLerp = 1 - Math.exp(-delta * 5.6)
+    const dt = Math.min(delta, 0.05)
+    const positionLerp = 1 - Math.exp(-dt * 4.8)
+    const targetLerp = 1 - Math.exp(-dt * 5.2)
+    const upLerp = 1 - Math.exp(-dt * 5.6)
 
     currentCamera.position.lerp(desiredCameraPositionRef.current, positionLerp)
     ctrl.target.lerp(desiredControlsTargetRef.current, targetLerp)
@@ -643,13 +742,13 @@ function SceneContent({
       currentCamera.fov,
       desiredFovRef.current,
       4.8,
-      delta
+      dt
     )
     currentCamera.far = THREE.MathUtils.damp(
       currentCamera.far,
       desiredFarRef.current,
       4.8,
-      delta
+      dt
     )
     currentCamera.updateProjectionMatrix()
     ctrl.update()
@@ -670,9 +769,8 @@ function SceneContent({
       currentCamera.updateProjectionMatrix()
       ctrl.update()
       isCameraAnimatingRef.current = false
+      enforceSunCollision()
     }
-
-    enforceSunCollision()
   })
 
   return (
@@ -703,10 +801,6 @@ function SceneContent({
         intensity={isShadowlessMode ? 0.12 : 0.06}
         color="#b8c8ff"
       />
-
-      <Suspense fallback={null}>
-        <Environment preset="studio" environmentIntensity={1.02} />
-      </Suspense>
 
       {modelPreset === 'limited' || isDisplay || isPhysical ? null : <WorkshopTable />}
 
@@ -792,33 +886,27 @@ export function OrreryScene({
   const physicalBodyScale =
     isPhysical && sunSphereRadius != null ? computePhysicalBodyScale(planets, sunSphereRadius) : 1
 
-  const planetExtent = computePlanetExtent(planets, isPhysical ? physicalBodyScale : 1)
-  const innerExtent = computeInnerPhysicalExtentWithScale(planets, physicalBodyScale)
-  const sunExtent = isPhysical ? (sunSphereRadius ?? 0.92) * physicalBodyScale : sunSphereRadius ?? 0.92
-  const modelExtent = Math.max(planetExtent, sunExtent)
-  const physicalViewExtent = physicalView === 'inner' ? Math.max(innerExtent, sunExtent) : modelExtent
-
-  const cameraZ = isPhysical
-    ? physicalView === 'inner'
-      ? Math.max(14000, physicalViewExtent * 1.45)
-      : Math.max(180000, physicalViewExtent * 1.12)
-    : Math.max(16, modelExtent * 1.08)
-  const cameraY = isPhysical
-    ? physicalView === 'inner'
-      ? Math.max(4200, physicalViewExtent * 0.42)
-      : Math.max(64000, physicalViewExtent * 0.34)
-    : Math.max(8.5, modelExtent * 0.58)
-  const cameraFar = Math.max(500, modelExtent * 4)
-  const cameraFov = isPhysical ? (physicalView === 'inner' ? 38 : 44) : 36
-  const [initialCamera] = useState(() => ({
-    position: [0, cameraY, cameraZ] as [number, number, number],
-    fov: cameraFov,
-    near: 0.1,
-    far: cameraFar,
-  }))
+  const [initialCamera] = useState(() => {
+    const limitedPlanets = getPlanets('limited')
+    const cam = computeCameraPoseForPresetList('limited', physicalView, limitedPlanets)
+    return {
+      position: [0, cam.cameraY, cam.cameraZ] as [number, number, number],
+      fov: cam.cameraFov,
+      near: 0.1,
+      far: cam.cameraFar,
+    }
+  })
+  const [canvasReady, setCanvasReady] = useState(false)
+  const handleRevealReady = useCallback(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        startTransition(() => setCanvasReady(true))
+      })
+    })
+  }, [])
 
   return (
-    <div className={className}>
+    <div className={className} style={{ position: 'relative' }}>
       <Canvas
         shadows
         camera={initialCamera}
@@ -830,16 +918,36 @@ export function OrreryScene({
         }}
         dpr={[1, 2]}
       >
-        <SceneContent
-          paused={paused}
-          planets={planets}
-          modelPreset={modelPreset}
-          physicalView={physicalView}
-          physicalBodyScale={physicalBodyScale}
-          timeScale={timeScale}
-          onControlsReady={onControlsReady}
-        />
+        <Suspense fallback={<color attach="background" args={['#12100e']} />}>
+          <SceneContent
+            paused={paused}
+            planets={planets}
+            modelPreset={modelPreset}
+            physicalView={physicalView}
+            physicalBodyScale={physicalBodyScale}
+            timeScale={timeScale}
+            onControlsReady={onControlsReady}
+            onRevealReady={handleRevealReady}
+          />
+        </Suspense>
       </Canvas>
+      <div
+        className="orrery-scene-load-overlay"
+        role="status"
+        aria-live="polite"
+        aria-busy={!canvasReady}
+        aria-hidden={canvasReady}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: '#12100e',
+          opacity: canvasReady ? 0 : 1,
+          transition: 'opacity 180ms ease-out',
+          pointerEvents: 'none',
+        }}
+      >
+        <span className="orrery-scene-load-hint">Loading scene…</span>
+      </div>
     </div>
   )
 }

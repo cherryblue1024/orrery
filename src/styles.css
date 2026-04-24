@@ -288,3 +288,30 @@ body {
     max-width: none;
   }
 }
+
+.orrery-scene-load-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.orrery-scene-load-hint {
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  animation: orrery-scene-load-hint-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes orrery-scene-load-hint-pulse {
+  0%,
+  100% {
+    opacity: 0.38;
+  }
+
+  50% {
+    opacity: 0.85;
+  }
+}
