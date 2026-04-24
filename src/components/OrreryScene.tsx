@@ -36,6 +36,10 @@ function createEmptyVirtualKeys(): VirtualKeyState {
 
 useEnvironment.preload({ preset: 'studio' })
 
+// Reused across keyboard/touch-pad frames to avoid per-frame allocations.
+const _keyboardRightTmp = new THREE.Vector3()
+const _keyboardScratch = new THREE.Vector3()
+
 const brass = {
   color: '#c4a052',
   metalness: 0.92,
@@ -382,7 +386,6 @@ function SceneContent({
   const hadLimitedPresetRef = useRef(false)
   const pressedKeysRef = useRef<VirtualKeyState>(createEmptyVirtualKeys())
   const keyboardOffsetRef = useRef(new THREE.Vector3())
-  const keyboardSphericalRef = useRef(new THREE.Spherical())
   const defaultCameraUpRef = useRef(new THREE.Vector3(0, 1, 0))
   const isDisplay = modelPreset === 'display'
   const isPhysical = modelPreset === 'physical'
@@ -703,37 +706,76 @@ function SceneContent({
       activeKeys.KeyQ ||
       activeKeys.KeyE
     ) {
-      keyboardOffsetRef.current.copy(currentCamera.position).sub(ctrl.target)
-      keyboardSphericalRef.current.setFromVector3(keyboardOffsetRef.current)
+      // Work in axis-angle space so rotations are continuous and can freely
+      // pass through the poles (W/S keeps pitching over the top) and wrap
+      // infinitely (A/D keeps yawing around). We maintain a persistent camera
+      // "up" vector so the horizon flips naturally when the camera tumbles.
+      const offset = keyboardOffsetRef.current
+        .copy(currentCamera.position)
+        .sub(ctrl.target)
+
+      // Seed the persistent up from the live camera whenever it has drifted,
+      // so drags/trackball moves feed cleanly into keyboard rotation.
+      const camUp = desiredCameraUpRef.current
+      if (camUp.lengthSq() < 1e-6) camUp.copy(currentCamera.up)
+
+      // Re-orthogonalise up against the offset so small numerical drift does
+      // not accumulate into skew after many rotations.
+      const offsetLenSq = offset.lengthSq()
+      if (offsetLenSq > 1e-8) {
+        const dot = camUp.dot(offset) / offsetLenSq
+        camUp.addScaledVector(offset, -dot)
+        if (camUp.lengthSq() < 1e-6) {
+          // Fallback: pick any axis perpendicular to offset.
+          camUp.set(0, 1, 0)
+          const d = camUp.dot(offset) / offsetLenSq
+          camUp.addScaledVector(offset, -d)
+          if (camUp.lengthSq() < 1e-6) camUp.set(1, 0, 0)
+        }
+        camUp.normalize()
+      } else {
+        camUp.copy(defaultCameraUpRef.current)
+      }
+
+      const right = _keyboardRightTmp.crossVectors(camUp, offset)
+      if (right.lengthSq() < 1e-8) right.set(1, 0, 0)
+      right.normalize()
 
       const keyboardRotateSpeed = delta * 1.5
-      const keyboardZoomSpeed = Math.max(minDistance * 0.9, keyboardSphericalRef.current.radius * 1.4) * delta
-      if (activeKeys.KeyA) keyboardSphericalRef.current.theta += keyboardRotateSpeed
-      if (activeKeys.KeyD) keyboardSphericalRef.current.theta -= keyboardRotateSpeed
-      if (activeKeys.KeyW) keyboardSphericalRef.current.phi -= keyboardRotateSpeed
-      if (activeKeys.KeyS) keyboardSphericalRef.current.phi += keyboardRotateSpeed
-      if (activeKeys.KeyQ) keyboardSphericalRef.current.radius -= keyboardZoomSpeed
-      if (activeKeys.KeyE) keyboardSphericalRef.current.radius += keyboardZoomSpeed
+      let pitch = 0
+      let yaw = 0
+      if (activeKeys.KeyW) pitch -= keyboardRotateSpeed
+      if (activeKeys.KeyS) pitch += keyboardRotateSpeed
+      if (activeKeys.KeyA) yaw += keyboardRotateSpeed
+      if (activeKeys.KeyD) yaw -= keyboardRotateSpeed
 
-      keyboardSphericalRef.current.phi = THREE.MathUtils.clamp(
-        keyboardSphericalRef.current.phi,
-        0.05,
-        Math.PI - 0.05
-      )
-      keyboardSphericalRef.current.radius = THREE.MathUtils.clamp(
-        keyboardSphericalRef.current.radius,
-        minDistance,
-        maxDistance
-      )
-      keyboardSphericalRef.current.makeSafe()
+      if (pitch !== 0) {
+        offset.applyAxisAngle(right, pitch)
+        camUp.applyAxisAngle(right, pitch).normalize()
+      }
+      if (yaw !== 0) {
+        offset.applyAxisAngle(camUp, yaw)
+      }
 
-      keyboardOffsetRef.current.setFromSpherical(keyboardSphericalRef.current)
-      currentCamera.position.copy(ctrl.target).add(keyboardOffsetRef.current)
-      currentCamera.up.copy(defaultCameraUpRef.current)
+      let radius = offset.length()
+      if (activeKeys.KeyQ || activeKeys.KeyE) {
+        const keyboardZoomSpeed = Math.max(minDistance * 0.9, radius * 1.4) * delta
+        if (activeKeys.KeyQ) radius -= keyboardZoomSpeed
+        if (activeKeys.KeyE) radius += keyboardZoomSpeed
+      }
+      radius = THREE.MathUtils.clamp(radius, minDistance, maxDistance)
+      if (offset.lengthSq() < 1e-8) {
+        offset.copy(camUp).cross(_keyboardScratch.set(1, 0, 0))
+        if (offset.lengthSq() < 1e-8) offset.set(0, 0, 1)
+      }
+      offset.setLength(radius)
+
+      currentCamera.position.copy(ctrl.target).add(offset)
+      currentCamera.up.copy(camUp)
       currentCamera.lookAt(ctrl.target)
       desiredCameraPositionRef.current.copy(currentCamera.position)
       desiredControlsTargetRef.current.copy(ctrl.target)
-      desiredCameraUpRef.current.copy(defaultCameraUpRef.current)
+      desiredCameraUpRef.current.copy(camUp)
       isCameraAnimatingRef.current = false
       ctrl.update()
     }
